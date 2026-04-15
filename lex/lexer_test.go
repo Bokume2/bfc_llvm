@@ -10,7 +10,7 @@ import (
 
 func TestLexSuccess(t *testing.T) {
 	result := lex.NewLexer(lex.DefaultTokenDef()).Lex(bfcTest.TestCode)
-	if !slices.Equal(result, bfcTest.ExpectedTokens) {
+	if !slices.Equal(result, bfcTest.ExpectedTokens()) {
 		t.Log("Lex result:", result)
 		t.Fatal("Lex test failed")
 	}
