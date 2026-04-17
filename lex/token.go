@@ -112,7 +112,7 @@ func (td *TokenDef) Orderd() [8]string {
 			la := len(a)
 			lb := len(b)
 			switch {
-			case la < lb:
+			case la > lb:
 				return -1
 			case la == lb:
 				return 0
