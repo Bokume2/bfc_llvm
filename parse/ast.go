@@ -5,10 +5,12 @@ import (
 	"strings"
 
 	"github.com/Bokume2/bfc_llvm/lex"
+	"github.com/Bokume2/bfc_llvm/llvm"
+	"github.com/llir/llvm/ir"
 )
 
 type Node interface {
-	// TODO: Add IR Generation
+	AddIR(*llvm.BFContext, *ir.Block) *ir.Block
 }
 
 type CmdNode struct {
