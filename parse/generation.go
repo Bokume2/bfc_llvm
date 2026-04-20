@@ -9,7 +9,7 @@ import (
 func GenIR(t AST, tapeLen int32) *ir.Module {
 	module, ctx, next := llvm.InitIR(tapeLen)
 	next = addIRFor(t, ctx, next)
-	llvm.CloseIR(next)
+	llvm.CloseIR(ctx, next)
 	return module
 }
 

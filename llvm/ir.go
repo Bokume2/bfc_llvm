@@ -18,21 +18,18 @@ var (
 )
 
 type BFContext struct {
-	Head *ir.InstAlloca
-	Tape *ir.InstAlloca
-	Get  *ir.Func
-	Put  *ir.Func
+	Head    *ir.InstAlloca
+	Tape    *ir.InstCall
+	TapeLen int32
+	Get     *ir.Func
+	Put     *ir.Func
 }
 
 func (ctx BFContext) Load(block *ir.Block) (head *ir.InstLoad, vPtr *ir.InstGetElementPtr, v *ir.InstLoad) {
 	head = block.NewLoad(HeadType, ctx.Head)
-	vPtr = block.NewGetElementPtr(ctx.Tape.ElemType, ctx.Tape, constant.NewInt(types.I32, 0), head)
+	vPtr = block.NewGetElementPtr(CellType, ctx.Tape, head)
 	v = block.NewLoad(CellType, vPtr)
 	return
-}
-
-func (ctx BFContext) TapeLen() int32 {
-	return int32(ctx.Tape.ElemType.(*types.ArrayType).Len)
 }
 
 func InitIR(tapeLen int32) (*ir.Module, *BFContext, *ir.Block) {
@@ -45,23 +42,26 @@ func InitIR(tapeLen int32) (*ir.Module, *BFContext, *ir.Block) {
 	head := entry.NewAlloca(HeadType)
 	head.SetName("head")
 	entry.NewStore(constant.NewInt(HeadType, 0), head)
-	tape := entry.NewAlloca(types.NewArray(uint64(tapeLen), CellType))
+	calloc := module.NewFunc("calloc", types.NewPointer(CellType), ir.NewParam("", types.I64), ir.NewParam("", types.I64))
+	tape := entry.NewCall(calloc, constant.NewInt(types.I64, int64(tapeLen)), constant.NewInt(types.I64, int64(CellType.BitSize/8)))
 	tape.SetName("tape")
-	entry.NewStore(constant.NewZeroInitializer(tape.ElemType), tape)
 	getchar := module.NewFunc("getchar", types.I32)
 	putchar := module.NewFunc("putchar", types.I32, ir.NewParam("", types.I32))
 	ctx := &BFContext{
-		Head: head,
-		Tape: tape,
-		Get:  getchar,
-		Put:  putchar,
+		Head:    head,
+		Tape:    tape,
+		TapeLen: tapeLen,
+		Get:     getchar,
+		Put:     putchar,
 	}
 	next := main.NewBlock("")
 	entry.NewBr(next)
 	return module, ctx, next
 }
 
-func CloseIR(block *ir.Block) {
+func CloseIR(ctx *BFContext, block *ir.Block) {
+	free := block.Parent.Parent.NewFunc("free", types.Void, ir.NewParam("", types.NewPointer(CellType)))
+	block.NewCall(free, ctx.Tape)
 	block.NewRet(constant.NewInt(types.I32, 0))
 }
 
@@ -88,7 +88,7 @@ func PrvIR(ctx *BFContext, block *ir.Block) *ir.Block {
 	newHead := block.NewSub(head, constant.NewInt(CellType, 1))
 	cond := block.NewICmp(enum.IPredSLT, newHead, constant.NewInt(HeadType, 0))
 	then := block.Parent.NewBlock("")
-	then.NewStore(constant.NewInt(HeadType, int64(ctx.TapeLen()-1)), ctx.Head)
+	then.NewStore(constant.NewInt(HeadType, int64(ctx.TapeLen-1)), ctx.Head)
 	els := block.Parent.NewBlock("")
 	els.NewStore(newHead, ctx.Head)
 	block.NewCondBr(cond, then, els)
@@ -101,7 +101,7 @@ func PrvIR(ctx *BFContext, block *ir.Block) *ir.Block {
 func NxtIR(ctx *BFContext, block *ir.Block) *ir.Block {
 	head, _, _ := ctx.Load(block)
 	newHead := block.NewAdd(head, constant.NewInt(CellType, 1))
-	cond := block.NewICmp(enum.IPredSGE, newHead, constant.NewInt(HeadType, int64(ctx.TapeLen())))
+	cond := block.NewICmp(enum.IPredSGE, newHead, constant.NewInt(HeadType, int64(ctx.TapeLen)))
 	then := block.Parent.NewBlock("")
 	then.NewStore(constant.NewInt(HeadType, 0), ctx.Head)
 	els := block.Parent.NewBlock("")
