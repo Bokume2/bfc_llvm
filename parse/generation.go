@@ -3,46 +3,41 @@ package parse
 import (
 	"github.com/Bokume2/bfc_llvm/lex"
 	"github.com/Bokume2/bfc_llvm/llvm"
-	"github.com/llir/llvm/ir"
+	goLLVM "tinygo.org/x/go-llvm"
 )
 
-func GenIR(t AST, tapeLen int32) *ir.Module {
-	module, ctx, next := llvm.InitIR(tapeLen)
-	next = addIRFor(t, ctx, next)
-	llvm.CloseIR(ctx, next)
-	return module
+func GenIR(t AST, tapeLen int32) goLLVM.Module {
+	cc := llvm.InitIR(tapeLen)
+	addIRFor(t, cc)
+	llvm.CloseIR(cc)
+	return cc.Module
 }
 
-func addIRFor(ns []Node, ctx *llvm.BFContext, block *ir.Block) *ir.Block {
-	next := block
+func addIRFor(ns []Node, cc *llvm.CompilerContext) {
 	for _, n := range ns {
-		next = n.AddIR(ctx, next)
+		n.AddIR(cc)
 	}
-	return next
 }
 
-func (cn CmdNode) AddIR(ctx *llvm.BFContext, block *ir.Block) *ir.Block {
+func (cn CmdNode) AddIR(cc *llvm.CompilerContext) {
 	switch cn.Cmd {
 	case lex.IncToken:
-		return llvm.IncIR(ctx, block)
+		llvm.IncIR(cc)
 	case lex.DecToken:
-		return llvm.DecIR(ctx, block)
+		llvm.DecIR(cc)
 	case lex.PrvToken:
-		return llvm.PrvIR(ctx, block)
+		llvm.PrvIR(cc)
 	case lex.NxtToken:
-		return llvm.NxtIR(ctx, block)
+		llvm.NxtIR(cc)
 	case lex.GetToken:
-		return llvm.GetIR(ctx, block)
+		llvm.GetIR(cc)
 	case lex.PutToken:
-		return llvm.PutIR(ctx, block)
-	default:
-		return block
+		llvm.PutIR(cc)
 	}
 }
 
-func (ln LoopNode) AddIR(ctx *llvm.BFContext, block *ir.Block) *ir.Block {
-	loop, next := llvm.LoopStartIR(ctx, block)
-	loopEnd := addIRFor(ln.Block, ctx, loop)
-	llvm.LoopEndIR(block, loopEnd)
-	return next
+func (ln LoopNode) AddIR(cc *llvm.CompilerContext) {
+	loopStart, next := llvm.LoopStartIR(cc)
+	addIRFor(ln.Block, cc)
+	llvm.LoopEndIR(cc, loopStart, next)
 }

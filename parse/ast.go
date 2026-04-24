@@ -6,11 +6,10 @@ import (
 
 	"github.com/Bokume2/bfc_llvm/lex"
 	"github.com/Bokume2/bfc_llvm/llvm"
-	"github.com/llir/llvm/ir"
 )
 
 type Node interface {
-	AddIR(*llvm.BFContext, *ir.Block) *ir.Block
+	AddIR(*llvm.CompilerContext)
 }
 
 type CmdNode struct {

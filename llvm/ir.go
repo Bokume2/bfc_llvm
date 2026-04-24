@@ -1,146 +1,169 @@
 package llvm
 
 import (
-	"github.com/llir/llvm/ir"
-	"github.com/llir/llvm/ir/constant"
-	"github.com/llir/llvm/ir/enum"
-	"github.com/llir/llvm/ir/types"
+	"tinygo.org/x/go-llvm"
 )
 
-var (
-	HeadType = types.I32
-	CellType = types.I8
-)
-
-var (
-	CellMin = constant.NewInt(CellType, 0)
-	CellMax = constant.NewInt(CellType, 0xFF)
-)
-
-type BFContext struct {
-	Head    *ir.InstAlloca
-	Tape    *ir.InstCall
-	TapeLen int32
-	Get     *ir.Func
-	Put     *ir.Func
+type CompilerContext struct {
+	LLVMContext llvm.Context
+	Module      llvm.Module
+	Builder     llvm.Builder
+	CellType    llvm.Type
+	HeadType    llvm.Type
+	Head        llvm.Value
+	Tape        llvm.Value
+	TapeLen     int32
+	GetType     llvm.Type
+	Get         llvm.Value
+	PutType     llvm.Type
+	Put         llvm.Value
 }
 
-func (ctx BFContext) Load(block *ir.Block) (head *ir.InstLoad, vPtr *ir.InstGetElementPtr, v *ir.InstLoad) {
-	head = block.NewLoad(HeadType, ctx.Head)
-	vPtr = block.NewGetElementPtr(CellType, ctx.Tape, head)
-	v = block.NewLoad(CellType, vPtr)
+func (cc *CompilerContext) Load() (head, vPtr, v llvm.Value) {
+	head = cc.Builder.CreateLoad(cc.HeadType, cc.Head, "")
+	vPtr = cc.Builder.CreateInBoundsGEP(llvm.PointerType(cc.CellType, 0), cc.Tape, []llvm.Value{head}, "")
+	v = cc.Builder.CreateLoad(cc.CellType, vPtr, "")
 	return
 }
 
-func InitIR(tapeLen int32) (*ir.Module, *BFContext, *ir.Block) {
+func InitIR(tapeLen int32) *CompilerContext {
 	if tapeLen <= 0 {
 		panic("Length of tape cannot be negative nor zero")
 	}
-	module := ir.NewModule()
-	main := module.NewFunc("main", types.I32)
-	entry := main.NewBlock("")
-	head := entry.NewAlloca(HeadType)
-	head.SetName("head")
-	entry.NewStore(constant.NewInt(HeadType, 0), head)
-	calloc := module.NewFunc("calloc", types.NewPointer(CellType), ir.NewParam("", types.I64), ir.NewParam("", types.I64))
-	tape := entry.NewCall(calloc, constant.NewInt(types.I64, int64(tapeLen)), constant.NewInt(types.I64, int64(CellType.BitSize/8)))
-	tape.SetName("tape")
-	getchar := module.NewFunc("getchar", types.I32)
-	putchar := module.NewFunc("putchar", types.I32, ir.NewParam("", types.I32))
-	ctx := &BFContext{
-		Head:    head,
-		Tape:    tape,
-		TapeLen: tapeLen,
-		Get:     getchar,
-		Put:     putchar,
+	c := llvm.NewContext()
+	b := c.NewBuilder()
+	m := c.NewModule("")
+	main := llvm.AddFunction(m, "main", llvm.FunctionType(c.Int32Type(), []llvm.Type{}, false))
+	entry := llvm.AddBasicBlock(main, "entry")
+	b.SetInsertPoint(entry, entry.FirstInstruction())
+	cellType := c.Int8Type()
+	headType := c.Int32Type()
+	head := b.CreateAlloca(headType, "head")
+	b.CreateStore(llvm.ConstInt(headType, 0, false), head)
+	callocType := llvm.FunctionType(llvm.PointerType(cellType, 0), []llvm.Type{
+		c.Int64Type(),
+		c.Int64Type(),
+	}, false)
+	calloc := llvm.AddFunction(m, "calloc", callocType)
+	tape := b.CreateCall(callocType, calloc, []llvm.Value{
+		llvm.ConstInt(c.Int64Type(), uint64(tapeLen), false),
+		llvm.ConstInt(c.Int64Type(), 1, false),
+	}, "tape")
+	getcharType := llvm.FunctionType(c.Int32Type(), []llvm.Type{}, false)
+	getchar := llvm.AddFunction(m, "getchar", getcharType)
+	putcharType := llvm.FunctionType(c.Int32Type(), []llvm.Type{c.Int32Type()}, false)
+	putchar := llvm.AddFunction(m, "putchar", putcharType)
+	next := llvm.AddBasicBlock(main, "")
+	b.CreateBr(next)
+	b.SetInsertPoint(next, next.FirstInstruction())
+	cc := &CompilerContext{
+		LLVMContext: c,
+		Module:      m,
+		Builder:     b,
+		CellType:    cellType,
+		HeadType:    headType,
+		Head:        head,
+		Tape:        tape,
+		TapeLen:     tapeLen,
+		GetType:     getcharType,
+		Get:         getchar,
+		PutType:     putcharType,
+		Put:         putchar,
 	}
-	next := main.NewBlock("")
-	entry.NewBr(next)
-	return module, ctx, next
+	return cc
 }
 
-func CloseIR(ctx *BFContext, block *ir.Block) {
-	free := block.Parent.Parent.NewFunc("free", types.Void, ir.NewParam("", types.NewPointer(CellType)))
-	block.NewCall(free, ctx.Tape)
-	block.NewRet(constant.NewInt(types.I32, 0))
+func CloseIR(cc *CompilerContext) {
+	cc.Builder.CreateFree(cc.Tape)
+	cc.Builder.CreateRet(llvm.ConstInt(cc.LLVMContext.Int32Type(), 0, false))
+	if err := llvm.VerifyModule(cc.Module, llvm.ReturnStatusAction); err != nil {
+		panic(err)
+	}
 }
 
-func IncIR(ctx *BFContext, block *ir.Block) *ir.Block {
-	_, vPtr, v := ctx.Load(block)
-	newV := block.NewAdd(v, constant.NewInt(CellType, 1))
-	block.NewStore(newV, vPtr)
-	next := block.Parent.NewBlock("")
-	block.NewBr(next)
-	return next
+func IncIR(cc *CompilerContext) {
+	_, vPtr, v := cc.Load()
+	tmp := cc.Builder.CreateAdd(v, llvm.ConstInt(cc.CellType, 1, false), "")
+	cc.Builder.CreateStore(tmp, vPtr)
+	next := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	cc.Builder.CreateBr(next)
+	cc.Builder.SetInsertPoint(next, next.FirstInstruction())
 }
 
-func DecIR(ctx *BFContext, block *ir.Block) *ir.Block {
-	_, vPtr, v := ctx.Load(block)
-	newV := block.NewSub(v, constant.NewInt(CellType, 1))
-	block.NewStore(newV, vPtr)
-	next := block.Parent.NewBlock("")
-	block.NewBr(next)
-	return next
+func DecIR(cc *CompilerContext) {
+	_, vPtr, v := cc.Load()
+	tmp := cc.Builder.CreateSub(v, llvm.ConstInt(cc.CellType, 1, false), "")
+	cc.Builder.CreateStore(tmp, vPtr)
+	next := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	cc.Builder.CreateBr(next)
+	cc.Builder.SetInsertPoint(next, next.FirstInstruction())
 }
 
-func PrvIR(ctx *BFContext, block *ir.Block) *ir.Block {
-	head, _, _ := ctx.Load(block)
-	newHead := block.NewSub(head, constant.NewInt(CellType, 1))
-	cond := block.NewICmp(enum.IPredSLT, newHead, constant.NewInt(HeadType, 0))
-	then := block.Parent.NewBlock("")
-	then.NewStore(constant.NewInt(HeadType, int64(ctx.TapeLen-1)), ctx.Head)
-	els := block.Parent.NewBlock("")
-	els.NewStore(newHead, ctx.Head)
-	block.NewCondBr(cond, then, els)
-	next := block.Parent.NewBlock("")
-	then.NewBr(next)
-	els.NewBr(next)
-	return next
+func PrvIR(cc *CompilerContext) {
+	head, _, _ := cc.Load()
+	tmp := cc.Builder.CreateSub(head, llvm.ConstInt(cc.HeadType, 1, false), "")
+	cond := cc.Builder.CreateICmp(llvm.IntSLT, tmp, llvm.ConstInt(cc.HeadType, 0, false), "")
+	then := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	els := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	next := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	cc.Builder.CreateCondBr(cond, then, els)
+	cc.Builder.SetInsertPoint(then, then.FirstInstruction())
+	cc.Builder.CreateStore(llvm.ConstInt(cc.HeadType, uint64(cc.TapeLen-1), false), cc.Head)
+	cc.Builder.CreateBr(next)
+	cc.Builder.SetInsertPoint(els, els.FirstInstruction())
+	cc.Builder.CreateStore(tmp, cc.Head)
+	cc.Builder.CreateBr(next)
+	cc.Builder.SetInsertPoint(next, next.FirstInstruction())
 }
 
-func NxtIR(ctx *BFContext, block *ir.Block) *ir.Block {
-	head, _, _ := ctx.Load(block)
-	newHead := block.NewAdd(head, constant.NewInt(CellType, 1))
-	cond := block.NewICmp(enum.IPredSGE, newHead, constant.NewInt(HeadType, int64(ctx.TapeLen)))
-	then := block.Parent.NewBlock("")
-	then.NewStore(constant.NewInt(HeadType, 0), ctx.Head)
-	els := block.Parent.NewBlock("")
-	els.NewStore(newHead, ctx.Head)
-	block.NewCondBr(cond, then, els)
-	next := block.Parent.NewBlock("")
-	then.NewBr(next)
-	els.NewBr(next)
-	return next
+func NxtIR(cc *CompilerContext) {
+	head, _, _ := cc.Load()
+	tmp := cc.Builder.CreateAdd(head, llvm.ConstInt(cc.HeadType, 1, false), "")
+	cond := cc.Builder.CreateICmp(llvm.IntSGE, tmp, llvm.ConstInt(cc.HeadType, uint64(cc.TapeLen), false), "")
+	then := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	els := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	next := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	cc.Builder.CreateCondBr(cond, then, els)
+	cc.Builder.SetInsertPoint(then, then.FirstInstruction())
+	cc.Builder.CreateStore(llvm.ConstInt(cc.HeadType, 0, false), cc.Head)
+	cc.Builder.CreateBr(next)
+	cc.Builder.SetInsertPoint(els, els.FirstInstruction())
+	cc.Builder.CreateStore(tmp, cc.Head)
+	cc.Builder.CreateBr(next)
+	cc.Builder.SetInsertPoint(next, next.FirstInstruction())
 }
 
-func GetIR(ctx *BFContext, block *ir.Block) *ir.Block {
-	got32 := block.NewCall(ctx.Get)
-	got := block.NewTrunc(got32, CellType)
-	_, vPtr, _ := ctx.Load(block)
-	block.NewStore(got, vPtr)
-	next := block.Parent.NewBlock("")
-	block.NewBr(next)
-	return next
+func GetIR(cc *CompilerContext) {
+	got32 := cc.Builder.CreateCall(cc.GetType, cc.Get, []llvm.Value{}, "")
+	got := cc.Builder.CreateTrunc(got32, cc.CellType, "")
+	_, vPtr, _ := cc.Load()
+	cc.Builder.CreateStore(got, vPtr)
+	next := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	cc.Builder.CreateBr(next)
+	cc.Builder.SetInsertPoint(next, next.FirstInstruction())
 }
 
-func PutIR(ctx *BFContext, block *ir.Block) *ir.Block {
-	_, _, v := ctx.Load(block)
-	v32 := block.NewZExt(v, types.I32)
-	block.NewCall(ctx.Put, v32)
-	next := block.Parent.NewBlock("")
-	block.NewBr(next)
-	return next
+func PutIR(cc *CompilerContext) {
+	_, _, v := cc.Load()
+	v32 := cc.Builder.CreateZExt(v, cc.LLVMContext.Int32Type(), "")
+	cc.Builder.CreateCall(cc.PutType, cc.Put, []llvm.Value{v32}, "")
+	next := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	cc.Builder.CreateBr(next)
+	cc.Builder.SetInsertPoint(next, next.FirstInstruction())
 }
 
-func LoopStartIR(ctx *BFContext, block *ir.Block) (loop *ir.Block, next *ir.Block) {
-	_, _, v := ctx.Load(block)
-	cond := block.NewICmp(enum.IPredNE, v, constant.NewInt(CellType, 0))
-	loop = block.Parent.NewBlock("")
-	next = block.Parent.NewBlock("")
-	block.NewCondBr(cond, loop, next)
+func LoopStartIR(cc *CompilerContext) (loopStart, next llvm.BasicBlock) {
+	loopStart = cc.Builder.GetInsertBlock()
+	_, _, v := cc.Load()
+	cond := cc.Builder.CreateICmp(llvm.IntNE, v, llvm.ConstInt(cc.CellType, 0, false), "")
+	loop := llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	next = llvm.AddBasicBlock(cc.Builder.GetInsertBlock().Parent(), "")
+	cc.Builder.CreateCondBr(cond, loop, next)
+	cc.Builder.SetInsertPoint(loop, loop.FirstInstruction())
 	return
 }
 
-func LoopEndIR(loopStart *ir.Block, loopEnd *ir.Block) {
-	loopEnd.NewBr(loopStart)
+func LoopEndIR(cc *CompilerContext, loopStart llvm.BasicBlock, next llvm.BasicBlock) {
+	cc.Builder.CreateBr(loopStart)
+	cc.Builder.SetInsertPoint(next, next.FirstInstruction())
 }
