@@ -33,6 +33,7 @@ func InitIR(tapeLen int32) *CompilerContext {
 	c := llvm.NewContext()
 	b := c.NewBuilder()
 	m := c.NewModule("")
+	m.SetTarget(llvm.DefaultTargetTriple())
 	main := llvm.AddFunction(m, "main", llvm.FunctionType(c.Int32Type(), []llvm.Type{}, false))
 	entry := llvm.AddBasicBlock(main, "entry")
 	b.SetInsertPoint(entry, entry.FirstInstruction())
