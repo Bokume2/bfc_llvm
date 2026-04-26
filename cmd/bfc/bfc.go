@@ -52,6 +52,8 @@ func main() {
 		os.Exit(1)
 	}
 	m := parse.GenIR(ast, 4096)
+	defer m.Context().Dispose()
+	defer m.Dispose()
 	llvm.OptimizeIR(m, uint(optLv))
 	fmt.Println(m)
 }

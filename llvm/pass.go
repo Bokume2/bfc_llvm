@@ -16,7 +16,10 @@ func OptimizeIR(m llvm.Module, optLv uint) {
 		panic(err)
 	}
 	tm := t.CreateTargetMachine(llvm.DefaultTargetTriple(), "", "", llvm.CodeGenLevelDefault, llvm.RelocDefault, llvm.CodeModelDefault)
-	if err = m.RunPasses(fmt.Sprintf("default<O%d>", optLv), tm, llvm.NewPassBuilderOptions()); err != nil {
+	defer tm.Dispose()
+	pbo := llvm.NewPassBuilderOptions()
+	defer pbo.Dispose()
+	if err = m.RunPasses(fmt.Sprintf("default<O%d>", optLv), tm, pbo); err != nil {
 		panic(err)
 	}
 }

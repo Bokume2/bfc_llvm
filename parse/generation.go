@@ -8,6 +8,7 @@ import (
 
 func GenIR(t AST, tapeLen int32) goLLVM.Module {
 	cc := llvm.InitIR(tapeLen)
+	defer cc.Builder.Dispose()
 	addIRFor(t, cc)
 	llvm.CloseIR(cc)
 	return cc.Module
