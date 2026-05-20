@@ -8,6 +8,7 @@ type CompilerContext struct {
 	LLVMContext llvm.Context
 	Module      llvm.Module
 	Builder     llvm.Builder
+	Main        llvm.Value
 	CellType    llvm.Type
 	HeadType    llvm.Type
 	Head        llvm.Value
@@ -61,6 +62,7 @@ func InitIR(tapeLen int32) *CompilerContext {
 		LLVMContext: c,
 		Module:      m,
 		Builder:     b,
+		Main:        main,
 		CellType:    cellType,
 		HeadType:    headType,
 		Head:        head,

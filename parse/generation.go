@@ -6,12 +6,12 @@ import (
 	goLLVM "tinygo.org/x/go-llvm"
 )
 
-func GenIR(t AST, tapeLen int32) goLLVM.Module {
+func GenIR(t AST, tapeLen int32) (goLLVM.Module, goLLVM.Value) {
 	cc := llvm.InitIR(tapeLen)
 	defer cc.Builder.Dispose()
 	addIRFor(t, cc)
 	llvm.CloseIR(cc)
-	return cc.Module
+	return cc.Module, cc.Main
 }
 
 func addIRFor(ns []Node, cc *llvm.CompilerContext) {
